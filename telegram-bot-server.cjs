@@ -20,7 +20,10 @@ app.listen(PORT, () => {
 // CONFIGURATION
 // ==========================================
 // We use process.env so you can hide your token securely in Render's environment variables
-const token = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN';
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
+    throw new Error('Missing TELEGRAM_BOT_TOKEN environment variable.');
+}
 // The Cloudflare link to your Mini App
 const miniAppUrl = process.env.MINI_APP_URL || 'https://easter-airdrop-miniapp.pages.dev';
 
